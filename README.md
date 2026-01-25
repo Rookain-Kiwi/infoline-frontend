@@ -1,6 +1,6 @@
 # InfoLine Frontend
 
-Application web Angular pour la plateforme InfoLine - Actualités des technologies sportives.
+Application web Angular
 
 ## Stack Technique
 
