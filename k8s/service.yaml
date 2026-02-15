@@ -1,3 +1,15 @@
+# ==============================================================================
+# Service - InfoLine Frontend
+# ==============================================================================
+# Expose les pods Nginx du frontend à l'intérieur du cluster Kubernetes.
+#
+# Flux réseau :
+# Utilisateur → LoadBalancer AWS (Service Kibana) → Etc.
+#
+# Note : en l'état, le frontend est accessible depuis les autres pods
+# du cluster via ClusterIP.
+# Pour la démonstration ECF, l'accès se fait via kubectl port-forward.
+# ==============================================================================
 apiVersion: v1
 kind: Service
 metadata:
@@ -6,11 +18,18 @@ metadata:
   labels:
     app: infoline-frontend
 spec:
+  # ClusterIP : IP virtuelle interne au cluster, non accessible depuis Internet.
   type: ClusterIP
+
+  # Selector : route le trafic vers tous les pods ayant le label
+  # infoline-frontend (défini dans deployment.yaml).
   selector:
     app: infoline-frontend
+
   ports:
-  - name: http
-    port: 80
-    targetPort: 80
-    protocol: TCP
+    - name: http
+      port: 80        # Port exposé par le Service à l'intérieur du cluster
+      targetPort: 80  # Port du conteneur Nginx (listen 80 dans nginx.conf)
+      protocol: TCP
+      # Pas de mapping de port ici (80 → 80) contrairement au backend
+      # (80 → 8080) — Nginx écoute nativement sur le port HTTP standard.

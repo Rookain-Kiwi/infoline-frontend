@@ -1,32 +1,50 @@
-# Stage 1: Build
+# ==============================================================================
+# Dockerfile - InfoLine Frontend (Angular)
+# ==============================================================================
+# Build multi-stage pour optimiser la taille de l'image finale :
+#   Stage 1 (build)  : image Node.js complète — compile Angular
+#   Stage 2 (runtime): image Nginx Alpine légère — sert les fichiers
+#
+# L'image finale ne contient ni Node.js, npm, les sources TypeScript
+# ni les node_modules.
+# Ne reste que les fichiers statiques et Nginx.
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# Stage 1 : Build Angular
+# ------------------------------------------------------------------------------
+# node:20-alpine : Node.js Alpine Linux — image de build légère.
+# Alpine réduit considérablement le temps de pull dans le pipeline CI/CD GitHub Actions.
+# ------------------------------------------------------------------------------
 FROM node:20-alpine AS build
 WORKDIR /app
 
-# Copier les fichiers de dépendances
+# Copie des fichiers de dépendances en premier — optimisation du cache Docker.
+# Le wildcard package*.json copie à la fois package.json et package-lock.json.
 COPY package*.json ./
 
-# Installer les dépendances
+# npm ci (clean install) : installation déterministe depuis package-lock.json.
+# Plus fiable que npm install en CI/CD car garantit que les mêmes versions sont installées à chaque build.
 RUN npm ci
 
-# Copier le code source
+# Copie du code source après les dépendances
 COPY . .
 
-# Builder l'application
+# Build de production Angular (ng build).
+# Génère les fichiers optimisés dans /app/dist/infoline-app/browser
 RUN npm run build
 
-# Stage 2: Serve avec Nginx
+# ------------------------------------------------------------------------------
+# Stage 2 : Serve avec Nginx
+# ------------------------------------------------------------------------------
+# nginx:alpine : image Nginx officielle sur Alpine — image légère.
+# ------------------------------------------------------------------------------
 FROM nginx:alpine
 WORKDIR /usr/share/nginx/html
 
-# Supprimer les fichiers par défaut de nginx
+# Suppression des fichiers de démonstration Nginx par défaut
+# pour ne garder que les fichiers Angular.
 RUN rm -rf ./*
 
-# Copier les fichiers buildés depuis le stage précédent
-COPY --from=build /app/dist/infoline-app/browser ./
-
-# Copier la configuration nginx personnalisée
-COPY nginx.conf /etc/nginx/conf.d/default.conf
-
-EXPOSE 80
-
-CMD ["nginx", "-g", "daemon off;"]
+# Copie des fichiers statiques Angular buildés depuis le stage 1.
+COPY --from=build /app/dist/infoline-app/br

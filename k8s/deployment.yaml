@@ -1,3 +1,13 @@
+# ==============================================================================
+# Deployment - InfoLine Frontend
+# ==============================================================================
+# Déploie le frontend Angular servi par Nginx sur le cluster EKS
+# dans le namespace infoline-frontend.
+# L'image Docker est stockée dans ECR et construite par le pipeline GitHub Actions.
+#
+# Flux de déploiement :
+# GitHub Actions → npm test → ng build → docker build → ECR push → kubectl apply
+# ==============================================================================
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -7,10 +17,13 @@ metadata:
     app: infoline-frontend
     version: v1
 spec:
+  # 1 replica en dev — suffisant pour la démonstration ECF.
   replicas: 1
+
   selector:
     matchLabels:
       app: infoline-frontend
+
   template:
     metadata:
       labels:
@@ -18,33 +31,63 @@ spec:
         version: v1
     spec:
       containers:
-      - name: frontend
-        image: 744804011706.dkr.ecr.eu-west-3.amazonaws.com/infoline-frontend:latest
-        imagePullPolicy: Always
-        ports:
-        - containerPort: 80
-          name: http
-          protocol: TCP
-        resources:
-          requests:
-            memory: "64Mi"
-            cpu: "50m"
-          limits:
-            memory: "128Mi"
-            cpu: "200m"
-        livenessProbe:
-          httpGet:
-            path: /
-            port: 80
-          initialDelaySeconds: 10
-          periodSeconds: 30
-          timeoutSeconds: 5
-          failureThreshold: 3
-        readinessProbe:
-          httpGet:
-            path: /
-            port: 80
-          initialDelaySeconds: 5
-          periodSeconds: 10
-          timeoutSeconds: 3
-          failureThreshold: 3
+        - name: frontend
+          # Image ECR frontend — buildée par le pipeline CI/CD Angular.
+          # imagePullPolicy: Always : force le pull à chaque démarrage de pod
+          # pour garantir que le tag "latest" pointe vers le dernier build.
+          image: 744804011706.dkr.ecr.eu-west-3.amazonaws.com/infoline-frontend:latest
+          imagePullPolicy: Always
+
+          ports:
+            - containerPort: 80  # Port Nginx (listen 80 dans nginx.conf)
+              name: http
+              protocol: TCP
+
+          resources:
+            requests:
+              # Nginx + fichiers statiques Angular : empreinte mémoire très faible
+              # 64Mi largement suffisant.
+              # cpu: 50m — Nginx est très peu gourmand en CPU
+              # pour servir des fichiers statiques.
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              # 128Mi : limite plutôt large pour Nginx, évite tout OOMKill
+              # même en cas de pic de trafic sur les fichiers statiques.
+              # cpu: 200m : cohérent avec le backend. On équilibre les ressource
+              # entre les pods sur les nodes t3.medium.
+              memory: "128Mi"
+              cpu: "200m"
+
+          # ------------------------------------------------------------------
+          # Liveness Probe
+          # ------------------------------------------------------------------
+          # Nginx démarre en quelques secondes
+          # initialDelaySeconds: 10 est suffisant (vs 90s pour le backend).
+          # periodSeconds: 30 : vérification moins fréquente que le backend
+          # ------------------------------------------------------------------
+          livenessProbe:
+            httpGet:
+              path: /        # Racine Angular — Nginx retourne alors l'index.html (HTTP 200)
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          # ------------------------------------------------------------------
+          # Readiness Probe
+          # ------------------------------------------------------------------
+          # initialDelaySeconds: 5 — Nginx est prêt très rapidement après
+          # le démarrage du conteneur..
+          # periodSeconds: 10 : vérification fréquente pour un retour rapide
+          # au service après un rolling update.
+          # ------------------------------------------------------------------
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3

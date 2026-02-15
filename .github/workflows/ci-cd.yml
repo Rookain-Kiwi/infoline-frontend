@@ -1,3 +1,15 @@
+# ==============================================================================
+# CI/CD Pipeline - InfoLine Frontend (Angular)
+# ==============================================================================
+# Pipeline GitHub Actions en 3 jobs séquentiels :
+#   1. build-test       : install, tests Vitest, build Angular
+#   2. docker-build-push: build image Docker + push ECR
+#   3. deploy           : déploiement sur EKS
+#
+# Déclencheurs :
+#   - push sur main ou develop    : pipeline complet
+# ==============================================================================
+
 name: Frontend CI/CD Pipeline
 
 on:
@@ -6,88 +18,150 @@ on:
   pull_request:
     branches: [ main, develop ]
 
+# Variables d'environnement globales — partagées entre tous les jobs.
+# Centralisées ici pour éviter la duplication et faciliter les changements
 env:
-  AWS_REGION: eu-west-3
-  ECR_REPOSITORY: infoline-frontend
-  EKS_CLUSTER_NAME: infoline-eks-cluster
-  K8S_NAMESPACE: infoline-frontend
+  AWS_REGION: eu-west-3                    # Région AWS Paris
+  ECR_REPOSITORY: infoline-frontend        # Nom du dépôt ECR frontend
+  EKS_CLUSTER_NAME: infoline-eks-cluster   # Nom du cluster EKS (output Terraform)
+  K8S_NAMESPACE: infoline-frontend         # Namespace Kubernetes dédié au frontend
 
 jobs:
+
+  # ============================================================================
+  # Job 1 : Build and Test
+  # ============================================================================
+  # Exécuté sur toutes les branches — valide la qualité
+  # du code avant tout merge ou déploiement.
+  # ============================================================================
   build-test:
     name: Build and Test
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '20'
-        cache: 'npm'
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'  # Node.js 20 LTS — cohérent avec le Dockerfile
+          cache: 'npm'        # Cache du répertoire node_modules entre les runs
+                              # Réduit le temps d'installation
 
-    - name: Install dependencies
-      run: npm ci
+      # npm ci : installation déterministe
+      - name: Install dependencies
+        run: npm ci
 
-    - name: Run tests
-      run: npm test
+      # Exécution des tests Vitest
+      # Un échec ici bloque les jobs suivants
+      - name: Run tests
+        run: npm test
 
-    - name: Build application
-      run: npm run build
+      # Build de production Angular — vérifie que le code
+      # compile sans erreur et génère les fichiers statiques.
+      - name: Build application
+        run: npm run build
 
+  # ============================================================================
+  # Job 2 : Build & Push Docker Image
+  # ============================================================================
+  # Exécuté uniquement sur develop et main après succès du job build-test.
+  # Build l'image Docker multi-stage et la pousse sur ECR
+  # ============================================================================
   docker-build-push:
     name: Build & Push Docker Image
-    needs: build-test
+    needs: build-test   # Bloque tant que build-test n'est pas vert
     runs-on: ubuntu-latest
+    # Condition : push Docker uniquement sur les branches develop et main.
     if: github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main'
 
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ env.AWS_REGION }}
+      # Configuration des credentials AWS via les secrets GitHub.
+      # Le rôle IAM associé doit avoir les permissions nécessaires pour ECR
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
 
-    - name: Login to Amazon ECR
-      id: login-ecr
-      uses: aws-actions/amazon-ecr-login@v2
+      # Authentification Docker auprès d'ECR.
+      # L'action génère un token temporaire et configure docker login.
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
 
-    - name: Build and push Docker image
-      env:
-        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-        IMAGE_TAG: ${{ github.sha }}
-      run: |
-        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
-        docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
-        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-        docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
-        echo "✅ Pushed: $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+      - name: Build and push Docker image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}  # SHA du commit = tag unique et traçable
+        run: |
+          # Build de l'image avec le tag SHA du commit (immuable)
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
 
+          # Tag supplémentaire "latest" — utilisé par k8s/deployment.yaml
+          # (image: .../infoline-frontend:latest)
+          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
+                     $ECR_REGISTRY/$ECR_REPOSITORY:latest
+
+          # Push des deux tags vers ECR
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+
+          echo "✅ Pushed: $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+
+  # ============================================================================
+  # Job 3 : Deploy to EKS
+  # ============================================================================
+  # Déploie les manifests Kubernetes sur le cluster EKS après le push ECR.
+  # Applique tous les fichiers du répertoire k8s/ puis force le redémarrage
+  # des pods pour puller la nouvelle image "latest".
+  # ============================================================================
   deploy:
     name: Deploy to EKS
-    needs: docker-build-push
+    needs: docker-build-push  # Bloque tant que l'image n'est pas pushée sur ECR
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main'
 
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ env.AWS_REGION }}
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
 
-    - name: Update kubeconfig
-      run: aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER_NAME }}
+      # Génère le fichier kubeconfig pour kubectl.
+      # Utilise les credentials AWS configurés à l'étape précédente pour
+      # s'authentifier auprès de l'API server EKS.
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig \
+            --region ${{ env.AWS_REGION }} \
+            --name ${{ env.EKS_CLUSTER_NAME }}
 
-    - name: Deploy to Kubernetes
-      run: |
-        kubectl apply -f k8s/
-        kubectl delete pod -n ${{ env.K8S_NAMESPACE }} -l app=infoline-frontend || true
-        sleep 10
-        kubectl get pods -n ${{ env.K8S_NAMESPACE }}
+      - name: Deploy to Kubernetes
+        run: |
+          # Apply de tous les manifests k8s/ (configmap, deployment, service).
+          # kubectl apply est idempotent — crée les ressources si elles n'existent
+          # pas, les met à jour si elles ont changé.
+          kubectl apply -f k8s/
+
+          # Force le redémarrage des pods pour puller la nouvelle image "latest".
+          # Sans cette commande, les pods existants continueraient à utiliser
+          # l'ancienne image (déjà pullée) même si "latest" a changé dans ECR.
+          # || true : ne fait pas échouer le job si aucun pod n'existe encore.
+          kubectl delete pod -n ${{ env.K8S_NAMESPACE }} \
+            -l app=infoline-frontend || true
+
+          # Pause pour laisser le temps aux nouveaux pods de démarrer
+          # avant d'afficher leur statut dans les logs du pipeline.
+          sleep 10
+
+          # Affichage du statut des pods pour validation visuelle dans
+          # les logs GitHub Actions — confirme que le déploiement est en cours.
+          kubectl get pods -n ${{ env.K8S_NAMESPACE }}

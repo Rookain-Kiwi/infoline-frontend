@@ -1,9 +1,24 @@
+# ==============================================================================
+# ConfigMap - InfoLine Frontend
+# ==============================================================================
+# Stocke les variables de configuration non sensibles du frontend Angular.
+#
+# Note : contrairement au backend Spring Boot, Nginx ne consomme pas
+# directement des variables d'environnement pour sa configuration.
+# Ces variables sont disponibles dans le pod pour des scripts d'init
+# ==============================================================================
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: infoline-frontend-config
-  namespace: infoline-frontend
+  namespace: infoline-frontend  # Namespace dédié au frontend (isolement K8s)
 data:
+  # Nom de l'application — identifiant du service dans les logs Nginx
+  # et les dashboards Kibana.
   APPLICATION_NAME: "infoline-frontend"
+
+  # Niveau de log
   LOG_LEVEL: "INFO"
+
+  # Environnement de déploiement
   ENVIRONMENT: "dev"

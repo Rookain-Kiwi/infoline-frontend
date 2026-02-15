@@ -2,12 +2,22 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+
+  <!-- Titre affiché dans l'onglet du navigateur -->
   <title>InfolineApp</title>
+
+  <!-- base href="/" : indique au Router Angular que toutes les URLs
+       sont relatives à la racine. -->
   <base href="/">
+
+  <!-- Viewport responsive — adapte l'affichage aux écrans mobiles -->
   <meta name="viewport" content="width=device-width, initial-scale=1">
+
   <link rel="icon" type="image/x-icon" href="favicon.ico">
 </head>
 <body>
+  <!-- Point de montage du composant racine Angular.
+       Angular remplace cette balise par le template du composant App au bootstrap. -->
   <app-root></app-root>
 </body>
 </html>
