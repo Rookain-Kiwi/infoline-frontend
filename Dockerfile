@@ -57,5 +57,5 @@ COPY nginx.conf /etc/nginx/conf.d/default.conf
 EXPOSE 80
 
 # "daemon off" obligatoire dans Docker — si Nginx passe en background,
-# le processus principal se termine et Kubernetes redémarre le pod.
+# le processus principal se termine et Kubernetes redémarre le pod.git add
 CMD ["nginx", "-g", "daemon off;"]
