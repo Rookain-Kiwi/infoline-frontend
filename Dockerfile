@@ -47,4 +47,15 @@ WORKDIR /usr/share/nginx/html
 RUN rm -rf ./*
 
 # Copie des fichiers statiques Angular buildés depuis le stage 1.
-COPY --from=build /app/dist/infoline-app/br
+COPY --from=build /app/dist/infoline-app/browser ./
+
+# Remplacement de la configuration Nginx par défaut — nécessaire pour
+# le routing Angular SPA et le cache des assets statiques.
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+
+# Port d'écoute Nginx — mappé par le Service Kubernetes (targetPort: 80).
+EXPOSE 80
+
+# "daemon off" obligatoire dans Docker — si Nginx passe en background,
+# le processus principal se termine et Kubernetes redémarre le pod.
+CMD ["nginx", "-g", "daemon off;"]
