@@ -1,59 +1,123 @@
-# InfolineApp
+# infoline-frontend
 
-This project was generated using [Angular CLI](https://github.com/angular/angular-cli) version 21.1.2.
+Application web Angular — ECF DevOps (Studi).
 
-## Development server
+Servie par Nginx dans un conteneur Docker déployé sur Amazon EKS via un pipeline
+GitHub Actions qui build, teste, publie l'image sur ECR et déploie sur le cluster.
 
-To start a local development server, run:
+## Stack technique
 
-```bash
-ng serve
+| Composant       | Technologie                              |
+|-----------------|------------------------------------------|
+| Framework       | Angular 19 (standalone components)       |
+| Tests           | Vitest                                   |
+| Serveur web     | Nginx Alpine                             |
+| Container       | Docker — build multi-stage               |
+| Registry        | Amazon ECR                               |
+| Déploiement     | Amazon EKS (namespace infoline-frontend) |
+| CI/CD           | GitHub Actions                           |
+
+## Structure du projet
+
+```
+infoline-frontend/
+├── src/
+│   ├── app/
+│   │   ├── app.ts          # Composant racine (standalone)
+│   │   ├── app.config.ts   # Configuration Angular
+│   │   └── app.spec.ts     # Tests Vitest
+│   ├── index.html
+│   ├── main.ts             # Bootstrap de l'application
+│   └── styles.css
+├── k8s/
+│   ├── deployment.yaml     # Deployment EKS (1 replica, probes Nginx)
+│   ├── service.yaml        # Service ClusterIP (port 80)
+│   └── configmap.yaml      # Variables d'environnement
+├── Dockerfile              # Build multi-stage Node.js → Nginx Alpine
+├── nginx.conf              # Routing SPA + cache assets statiques
+└── .github/
+    └── workflows/
+        └── ci-cd.yml       # Pipeline GitHub Actions (build → test → ECR → EKS)
 ```
 
-Once the server is running, open your browser and navigate to `http://localhost:4200/`. The application will automatically reload whenever you modify any of the source files.
+## Développement local
 
-## Code scaffolding
+### Prérequis
 
-Angular CLI includes powerful code scaffolding tools. To generate a new component, run:
+- Node.js 20 LTS
+- npm
 
-```bash
-ng generate component component-name
-```
-
-For a complete list of available schematics (such as `components`, `directives`, or `pipes`), run:
+### Démarrage
 
 ```bash
-ng generate --help
+npm install
+npm start
+# Application disponible sur http://localhost:4200
 ```
 
-## Building
+`ng` n'étant pas installé globalement, utiliser `npm start` (alias `ng serve`)
+ou `npx ng` pour les autres commandes Angular CLI.
 
-To build the project run:
+### Tests
 
 ```bash
-ng build
+npm test
 ```
 
-This will compile your project and store the build artifacts in the `dist/` directory. By default, the production build optimizes your application for performance and speed.
-
-## Running unit tests
-
-To execute unit tests with the [Vitest](https://vitest.dev/) test runner, use the following command:
+### Build de production
 
 ```bash
-ng test
+npm run build
+# Fichiers générés dans dist/infoline-app/browser/
 ```
 
-## Running end-to-end tests
-
-For end-to-end (e2e) testing, run:
+### Build Docker
 
 ```bash
-ng e2e
+docker build -t infoline-frontend:latest .
+docker run -p 80:80 infoline-frontend:latest
+# Application disponible sur http://localhost:80
 ```
 
-Angular CLI does not come with an end-to-end testing framework by default. You can choose one that suits your needs.
+L'image utilise un build multi-stage (Node.js → Nginx Alpine).
+Les fichiers Angular buildés sont servis par Nginx avec routing SPA
+et cache navigateur d'un an sur les assets statiques.
 
-## Additional Resources
+## Pipeline CI/CD
 
-For more information on using the Angular CLI, including detailed command references, visit the [Angular CLI Overview and Command Reference](https://angular.dev/tools/cli) page.
+Le pipeline `.github/workflows/ci-cd.yml` se déclenche sur push vers `develop` et `main`.
+
+| Job               | Déclencheur     | Action                                    |
+|-------------------|-----------------|-------------------------------------------|
+| build-test        | Toutes branches | `npm ci` + `npm test` + `npm run build`   |
+| docker-build-push | develop / main  | Build image + push ECR (tag SHA commit)   |
+| deploy            | develop / main  | `kubectl apply k8s/` + redémarrage pods   |
+
+### Secrets GitHub requis
+
+- `AWS_ACCESS_KEY_ID`
+- `AWS_SECRET_ACCESS_KEY`
+
+## Déploiement manuel sur EKS
+
+```bash
+# Configurer kubectl
+aws eks update-kubeconfig --region eu-west-3 --name infoline-eks-cluster
+
+# Déployer
+kubectl apply -f k8s/
+
+# Vérifier
+kubectl get pods -n infoline-frontend
+kubectl get svc -n infoline-frontend
+```
+
+## Workflow Git
+
+- `main` — branche stable
+- `develop` — développement actif
+- `feature/*` — fonctionnalités en cours
+
+## Auteur
+
+Loïc KERGOAT — Promotion THERY  
